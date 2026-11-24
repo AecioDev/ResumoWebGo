@@ -81,8 +81,19 @@ body {
   gap: 10px;
 }
 
+.shortcut-filters {
+  display: grid;
+  grid-template-columns: 1fr 90px 105px;
+  gap: 8px;
+}
+
+.shortcut-filters .field {
+  min-width: 0;
+}
+
 @media (max-width: 600px) {
-  .two-cols {
+  .two-cols,
+  .shortcut-filters {
     grid-template-columns: 1fr;
   }
 }

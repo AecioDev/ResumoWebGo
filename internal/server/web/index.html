@@ -361,6 +361,44 @@
               <button type="submit" class="btn btn-primary">Salvar Acesso</button>
               <button type="button" id="btnDeleteUser" class="btn btn-danger-outline hidden">Excluir</button>
             </div>
+
+            <div id="usrShortcutBox" class="year-config-box hidden">
+              <div class="year-config-header">
+                <label>🔗 Link / Atalho de Acesso Direto (sem login)</label>
+                <div class="row-gap">
+                  <button type="button" id="btnGenToken" class="btn btn-sm btn-primary">Gerar Token</button>
+                  <button type="button" id="btnRevokeToken" class="btn btn-sm btn-danger-outline hidden">Revogar</button>
+                </div>
+              </div>
+              <p id="usrShortcutEmpty" class="muted small" style="margin:0">
+                Gere um token para criar um atalho <code>.url</code> que abre direto na empresa sem pedir usuário e senha.
+              </p>
+              <div id="usrShortcutReady" class="hidden">
+                <div class="shortcut-filters">
+                  <div class="field">
+                    <label for="scEmpresa">Empresa do Atalho</label>
+                    <select id="scEmpresa"></select>
+                  </div>
+                  <div class="field field-sm">
+                    <label for="scAno">Ano</label>
+                    <select id="scAno"></select>
+                  </div>
+                  <div class="field field-sm">
+                    <label for="scTipo">Tipo</label>
+                    <select id="scTipo">
+                      <option value="S">Sócios</option>
+                      <option value="A">Acerto</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="folder-picker-row mt-xs">
+                  <input type="text" id="usrShortcutUrl" readonly />
+                  <button type="button" id="btnCopyShortcut" class="btn btn-sm btn-secondary">📋 Copiar</button>
+                  <button type="button" id="btnDownloadShortcut" class="btn btn-sm btn-success">⬇ Baixar .url</button>
+                </div>
+                <small class="muted">Coloque o arquivo <code>.url</code> na pasta da empresa (substituindo o antigo <code>#_RESUMO.xlsx</code>). Se precisar cancelar, clique em <strong>Revogar</strong> ou <strong>Renovar Token</strong>.</small>
+              </div>
+            </div>
           </form>
         </div>
       </div>

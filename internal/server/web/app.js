@@ -102,11 +102,14 @@
 
   async function bootstrap() {
     const params = new URLSearchParams(window.location.search);
-    if (params.get("authError")) {
-      showAlert(params.get("authError"), "error");
-      window.history.replaceState({}, "", "/");
-    } else if (params.get("authOk")) {
-      showAlert("Google Drive conectado com sucesso!", "success");
+    const urlAuthError = params.get("authError");
+    const urlAuthOk = params.get("authOk");
+    const urlEmpId = params.get("empresaId") || "";
+    const urlAno = parseInt(params.get("ano") || "", 10);
+    const urlTipo = (params.get("tipo") || "").toUpperCase();
+    const urlMes = parseInt(params.get("mes") || "", 10);
+
+    if (urlAuthError || urlAuthOk || urlEmpId || !isNaN(urlAno) || urlTipo || !isNaN(urlMes)) {
       window.history.replaceState({}, "", "/");
     }
 
@@ -117,14 +120,33 @@
     state.auth = status.auth || null;
     state.empresas = status.empresas || [];
     state.anoAtualSistema = status.anoAtual || new Date().getFullYear();
-    state.ano = state.anoAtualSistema;
-    state.mes = status.mesAtual || 1;
+    state.ano = (!isNaN(urlAno) && urlAno >= 2000 && urlAno <= 2100) ? urlAno : state.anoAtualSistema;
+    state.mes = (!isNaN(urlMes) && urlMes >= 1 && urlMes <= 12) ? urlMes : (status.mesAtual || 1);
+    if (urlTipo === "S" || urlTipo === "A") {
+      state.tipo = urlTipo;
+    }
 
     renderShellVisibility();
-    if (!state.loggedIn) return;
+    if (!state.loggedIn) {
+      if (urlAuthError) {
+        $("loginError").textContent = urlAuthError;
+        $("loginError").classList.remove("hidden");
+      }
+      return;
+    }
+
+    if (urlAuthError) {
+      showAlert(urlAuthError, "error");
+    } else if (urlAuthOk) {
+      showAlert("Google Drive conectado com sucesso!", "success");
+    }
 
     if (status.redirectUri) $("redirectUriLabel").textContent = status.redirectUri;
     if (status.dataDir) $("dataDirLabel").textContent = status.dataDir;
+
+    if (urlEmpId && state.empresas.some((e) => e.id === urlEmpId)) {
+      state.selectedEmpresaId = urlEmpId;
+    }
 
     renderRoleUI();
     renderDriveAuthState();
@@ -911,6 +933,7 @@
     renderUserEmpresasCheckboxes(state.selectedEmpresaId ? [state.selectedEmpresaId] : []);
     syncUserRoleFields();
     $("btnDeleteUser").classList.add("hidden");
+    renderUserShortcutBox(null);
   }
 
   function fillUserForm(u) {
@@ -926,6 +949,101 @@
     renderUserEmpresasCheckboxes(u.empresaIds || []);
     syncUserRoleFields();
     $("btnDeleteUser").classList.toggle("hidden", u.id === state.user?.id);
+    renderUserShortcutBox(u);
+  }
+
+  function renderUserShortcutBox(u) {
+    const box = $("usrShortcutBox");
+    if (!u || !u.id) {
+      box.classList.add("hidden");
+      return;
+    }
+    box.classList.remove("hidden");
+
+    const hasToken = !!u.accessToken;
+    $("btnGenToken").textContent = hasToken ? "↻ Renovar Token" : "Gerar Token";
+    $("btnRevokeToken").classList.toggle("hidden", !hasToken);
+    $("usrShortcutEmpty").classList.toggle("hidden", hasToken);
+    $("usrShortcutReady").classList.toggle("hidden", !hasToken);
+
+    if (!hasToken) return;
+
+    const allowedEmpresas = u.role === "admin"
+      ? state.empresas
+      : state.empresas.filter((e) => (u.empresaIds || []).includes(e.id));
+
+    const scEmp = $("scEmpresa");
+    scEmp.innerHTML = "";
+    if (allowedEmpresas.length === 0) {
+      const opt = document.createElement("option");
+      opt.value = "";
+      opt.textContent = "(Painel geral)";
+      scEmp.appendChild(opt);
+    } else {
+      for (const emp of allowedEmpresas) {
+        const opt = document.createElement("option");
+        opt.value = emp.id;
+        opt.textContent = emp.nome;
+        scEmp.appendChild(opt);
+      }
+    }
+    syncShortcutAnoTipo(u);
+  }
+
+  function syncShortcutAnoTipo(u) {
+    const empId = $("scEmpresa").value;
+    const emp = state.empresas.find((e) => e.id === empId) || null;
+
+    const scAno = $("scAno");
+    scAno.innerHTML = "";
+    const anos = getEmpresaAnos(emp);
+    for (const y of anos) {
+      const opt = document.createElement("option");
+      opt.value = String(y);
+      opt.textContent = String(y);
+      scAno.appendChild(opt);
+    }
+
+    const scTipo = $("scTipo");
+    const optS = scTipo.querySelector('option[value="S"]');
+    const optA = scTipo.querySelector('option[value="A"]');
+    if (emp) {
+      const usaS = emp.modo === "S" || emp.modo === "SA";
+      const usaA = emp.modo === "A" || emp.modo === "SA";
+      optS.disabled = !usaS;
+      optA.disabled = !usaA;
+      if (scTipo.value === "S" && !usaS) scTipo.value = "A";
+      if (scTipo.value === "A" && !usaA) scTipo.value = "S";
+    } else {
+      optS.disabled = false;
+      optA.disabled = false;
+    }
+
+    updateShortcutUrlPreview(u);
+  }
+
+  function updateShortcutUrlPreview(u) {
+    const target = u || state.users.find((x) => x.id === $("usrId").value);
+    if (!target || !target.accessToken) return;
+
+    const qs = new URLSearchParams();
+    qs.set("token", target.accessToken);
+    if ($("scEmpresa").value) qs.set("empresaId", $("scEmpresa").value);
+    if ($("scAno").value) qs.set("ano", $("scAno").value);
+    if ($("scTipo").value) qs.set("tipo", $("scTipo").value);
+
+    $("usrShortcutUrl").value = `${window.location.origin}/acesso?${qs.toString()}`;
+  }
+
+  async function copyTextSafe(text) {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+      return;
+    }
+    const input = $("usrShortcutUrl");
+    input.select();
+    input.setSelectionRange(0, text.length);
+    document.execCommand("copy");
   }
 
   // ===== Explorador de Pastas do Google Drive =====
@@ -1313,6 +1431,62 @@
       } catch (err) {
         showAlert(err.message, "error");
       }
+    });
+
+    // Token / Atalho de Acesso Direto
+    $("btnGenToken").addEventListener("click", async () => {
+      const id = $("usrId").value;
+      if (!id) return;
+      const existing = state.users.find((x) => x.id === id);
+      if (existing && existing.accessToken && !confirm("Gerar um novo token vai invalidar os atalhos antigos deste usuário. Continuar?")) {
+        return;
+      }
+      try {
+        const updated = await api(`/api/users/${encodeURIComponent(id)}/token`, { method: "POST" });
+        await reloadUsersList(updated.id);
+        fillUserForm(updated);
+        showAlert("Token de acesso direto gerado!", "success");
+      } catch (err) {
+        showAlert(err.message, "error");
+      }
+    });
+
+    $("btnRevokeToken").addEventListener("click", async () => {
+      const id = $("usrId").value;
+      if (!id || !confirm("Revogar o token? Todos os atalhos deste usuário deixarão de funcionar.")) return;
+      try {
+        const updated = await api(`/api/users/${encodeURIComponent(id)}/token`, { method: "DELETE" });
+        await reloadUsersList(updated.id);
+        fillUserForm(updated);
+        showAlert("Token revogado com sucesso.", "success");
+      } catch (err) {
+        showAlert(err.message, "error");
+      }
+    });
+
+    $("scEmpresa").addEventListener("change", () => syncShortcutAnoTipo());
+    $("scAno").addEventListener("change", () => updateShortcutUrlPreview());
+    $("scTipo").addEventListener("change", () => updateShortcutUrlPreview());
+
+    $("btnCopyShortcut").addEventListener("click", async () => {
+      const url = $("usrShortcutUrl").value;
+      if (!url) return;
+      try {
+        await copyTextSafe(url);
+        showAlert("Link de acesso copiado para a área de transferência!", "success");
+      } catch (err) {
+        showAlert("Não foi possível copiar automaticamente: " + err.message, "warning");
+      }
+    });
+
+    $("btnDownloadShortcut").addEventListener("click", () => {
+      const id = $("usrId").value;
+      if (!id) return;
+      const qs = new URLSearchParams();
+      if ($("scEmpresa").value) qs.set("empresaId", $("scEmpresa").value);
+      if ($("scAno").value) qs.set("ano", $("scAno").value);
+      if ($("scTipo").value) qs.set("tipo", $("scTipo").value);
+      window.location.href = `/api/users/${encodeURIComponent(id)}/atalho?${qs.toString()}`;
     });
 
     // Picker Drive

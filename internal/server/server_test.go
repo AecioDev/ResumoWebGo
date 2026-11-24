@@ -252,4 +252,84 @@ func TestMultiUserIsolationAdminGestorSocio(t *testing.T) {
 		t.Fatalf("shutdown deveria ser 403 no modo servidor, veio %d", rShutForb.StatusCode)
 	}
 	rShutForb.Body.Close()
+
+	// 6) Token de acesso direto (/acesso) + download do atalho .url + revogação
+	rListUsers, _ := adminCli.Get(ts.URL + "/api/users")
+	var allUsers []auth.User
+	_ = json.NewDecoder(rListUsers.Body).Decode(&allUsers)
+	rListUsers.Body.Close()
+
+	var jociID string
+	for _, u := range allUsers {
+		if u.Username == "joci" {
+			jociID = u.ID
+			break
+		}
+	}
+	if jociID == "" {
+		t.Fatalf("usuário joci não encontrado na listagem")
+	}
+
+	rTok, err := adminCli.Post(ts.URL+"/api/users/"+jociID+"/token", "application/json", nil)
+	if err != nil || rTok.StatusCode != http.StatusOK {
+		t.Fatalf("gerar token falhou: err=%v status=%v", err, rTok)
+	}
+	var jociWithTok auth.User
+	_ = json.NewDecoder(rTok.Body).Decode(&jociWithTok)
+	rTok.Body.Close()
+	if jociWithTok.AccessToken == "" {
+		t.Fatalf("AccessToken veio vazio")
+	}
+
+	// Download do arquivo .url
+	rSc, err := adminCli.Get(ts.URL + "/api/users/" + jociID + "/atalho?empresaId=" + empJoci.ID + "&ano=2026&tipo=S")
+	if err != nil || rSc.StatusCode != http.StatusOK {
+		t.Fatalf("download atalho falhou: err=%v status=%v", err, rSc)
+	}
+	var scBuf bytes.Buffer
+	_, _ = scBuf.ReadFrom(rSc.Body)
+	rSc.Body.Close()
+	if !bytes.Contains(scBuf.Bytes(), []byte("[InternetShortcut]")) || !bytes.Contains(scBuf.Bytes(), []byte(jociWithTok.AccessToken)) {
+		t.Fatalf("conteúdo do atalho .url inválido: %s", scBuf.String())
+	}
+
+	// Cliente anônimo acessa /acesso?token=... -> deve redirecionar sem o token e já logar via cookie
+	jarAuto, _ := cookiejar.New(nil)
+	noRedirectCli := &http.Client{
+		Jar: jarAuto,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	rAuto, err := noRedirectCli.Get(ts.URL + "/acesso?token=" + jociWithTok.AccessToken + "&empresaId=" + empJoci.ID + "&ano=2026&tipo=S")
+	if err != nil || rAuto.StatusCode != http.StatusFound {
+		t.Fatalf("esperava 302 em /acesso, veio err=%v status=%v", err, rAuto)
+	}
+	loc := rAuto.Header.Get("Location")
+	rAuto.Body.Close()
+	if bytes.Contains([]byte(loc), []byte("token=")) || !bytes.Contains([]byte(loc), []byte("empresaId="+empJoci.ID)) {
+		t.Fatalf("Location de /acesso inesperada (não deve conter token): %s", loc)
+	}
+
+	// Cookie recebido no /acesso já deve permitir consultar /api/empresas
+	rCheck, _ := noRedirectCli.Get(ts.URL + "/api/empresas")
+	if rCheck.StatusCode != http.StatusOK {
+		t.Fatalf("cookie emitido por /acesso não autenticou /api/empresas: %d", rCheck.StatusCode)
+	}
+	rCheck.Body.Close()
+
+	// Revoga o token e verifica que o link antigo para de funcionar
+	reqRevoke, _ := http.NewRequest(http.MethodDelete, ts.URL+"/api/users/"+jociID+"/token", nil)
+	rRev, err := adminCli.Do(reqRevoke)
+	if err != nil || rRev.StatusCode != http.StatusOK {
+		t.Fatalf("revogar token falhou: err=%v status=%v", err, rRev)
+	}
+	rRev.Body.Close()
+
+	rAfterRev, _ := noRedirectCli.Get(ts.URL + "/acesso?token=" + jociWithTok.AccessToken)
+	locRev := rAfterRev.Header.Get("Location")
+	rAfterRev.Body.Close()
+	if !bytes.Contains([]byte(locRev), []byte("authError=")) {
+		t.Fatalf("token revogado deveria redirecionar com authError, veio: %s", locRev)
+	}
 }

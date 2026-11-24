@@ -59,6 +59,7 @@ func (s *Server) Handler() http.Handler {
 
 	mux.HandleFunc("POST /api/login", s.handleLogin)
 	mux.HandleFunc("POST /api/logout", s.handleLogout)
+	mux.HandleFunc("GET /acesso", s.handleTokenAccess)
 
 	mux.HandleFunc("POST /api/credentials", s.requireAdmin(s.handleSaveCredentials))
 	mux.HandleFunc("GET /auth/login", s.requireAdmin(s.handleAuthLogin))
@@ -72,6 +73,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/users", s.requireAdminOrGestor(s.handleListUsers))
 	mux.HandleFunc("POST /api/users", s.requireAdminOrGestor(s.handleSaveUser))
 	mux.HandleFunc("DELETE /api/users/{id}", s.requireAdminOrGestor(s.handleDeleteUser))
+	mux.HandleFunc("POST /api/users/{id}/token", s.requireAdminOrGestor(s.handleGenerateUserToken))
+	mux.HandleFunc("DELETE /api/users/{id}/token", s.requireAdminOrGestor(s.handleRevokeUserToken))
+	mux.HandleFunc("GET /api/users/{id}/atalho", s.requireAdminOrGestor(s.handleDownloadShortcut))
 	mux.HandleFunc("GET /api/socios-nomes", s.requireAdminOrGestor(s.handleListarNomesSocios))
 
 	mux.HandleFunc("GET /api/drive/folders", s.requireAdmin(s.handleListFolders))
@@ -216,6 +220,47 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 		s.authStore.ClearSessionCookie(w, r)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// handleTokenAccess autentica via link de atalho (/acesso?token=...&empresaId=...&ano=...&tipo=...)
+// grava o cookie de sessão HttpOnly e redireciona para / removendo o token da barra de endereços.
+func (s *Server) handleTokenAccess(w http.ResponseWriter, r *http.Request) {
+	if s.serverMode && s.authStore != nil {
+		token := strings.TrimSpace(r.URL.Query().Get("token"))
+		user, err := s.authStore.AuthenticateByToken(token)
+		if err != nil {
+			http.Redirect(w, r, "/?authError="+url.QueryEscape(err.Error()), http.StatusFound)
+			return
+		}
+		s.authStore.SetSessionCookie(w, r, user)
+
+		q := url.Values{}
+		if empID := strings.TrimSpace(r.URL.Query().Get("empresaId")); empID != "" && user.HasEmpresa(empID) {
+			q.Set("empresaId", empID)
+		}
+		if ano := strings.TrimSpace(r.URL.Query().Get("ano")); ano != "" {
+			if y, err := strconv.Atoi(ano); err == nil && y >= 2000 && y <= 2100 {
+				q.Set("ano", ano)
+			}
+		}
+		if tipo := strings.ToUpper(strings.TrimSpace(r.URL.Query().Get("tipo"))); tipo == "S" || tipo == "A" {
+			q.Set("tipo", tipo)
+		}
+		if mes := strings.TrimSpace(r.URL.Query().Get("mes")); mes != "" {
+			if m, err := strconv.Atoi(mes); err == nil && m >= 1 && m <= 12 {
+				q.Set("mes", mes)
+			}
+		}
+
+		dest := "/"
+		if encoded := q.Encode(); encoded != "" {
+			dest = "/?" + encoded
+		}
+		http.Redirect(w, r, dest, http.StatusFound)
+		return
+	}
+
+	http.Redirect(w, r, "/", http.StatusFound)
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
@@ -386,6 +431,108 @@ func (s *Server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func (s *Server) handleGenerateUserToken(w http.ResponseWriter, r *http.Request) {
+	if s.authStore == nil {
+		writeError(w, http.StatusBadRequest, "Disponível apenas no modo servidor")
+		return
+	}
+	actor, _ := s.currentActor(r)
+	id := r.PathValue("id")
+	updated, err := s.authStore.GenerateAccessToken(actor, id)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, updated)
+}
+
+func (s *Server) handleRevokeUserToken(w http.ResponseWriter, r *http.Request) {
+	if s.authStore == nil {
+		writeError(w, http.StatusBadRequest, "Disponível apenas no modo servidor")
+		return
+	}
+	actor, _ := s.currentActor(r)
+	id := r.PathValue("id")
+	updated, err := s.authStore.RevokeAccessToken(actor, id)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, updated)
+}
+
+func (s *Server) handleDownloadShortcut(w http.ResponseWriter, r *http.Request) {
+	if s.authStore == nil {
+		writeError(w, http.StatusBadRequest, "Disponível apenas no modo servidor")
+		return
+	}
+	actor, _ := s.currentActor(r)
+	id := r.PathValue("id")
+	targetUser, err := s.authStore.GetManagedByID(actor, id)
+	if err != nil {
+		writeError(w, http.StatusForbidden, err.Error())
+		return
+	}
+	if strings.TrimSpace(targetUser.AccessToken) == "" {
+		writeError(w, http.StatusBadRequest, "Gere primeiro o token de acesso deste usuário")
+		return
+	}
+
+	empID := strings.TrimSpace(r.URL.Query().Get("empresaId"))
+	ano := strings.TrimSpace(r.URL.Query().Get("ano"))
+	tipo := strings.ToUpper(strings.TrimSpace(r.URL.Query().Get("tipo")))
+
+	q := url.Values{}
+	q.Set("token", targetUser.AccessToken)
+
+	empNome := ""
+	if empID != "" {
+		if emp, ok := s.store.GetEmpresa(empID); ok && targetUser.HasEmpresa(empID) {
+			q.Set("empresaId", emp.ID)
+			empNome = emp.Nome
+		}
+	}
+	if ano != "" {
+		q.Set("ano", ano)
+	}
+	if tipo == "S" || tipo == "A" {
+		q.Set("tipo", tipo)
+	}
+
+	origin := s.publicOrigin(r)
+	accessURL := origin + "/acesso?" + q.Encode()
+
+	content := fmt.Sprintf("[InternetShortcut]\r\nURL=%s\r\n", accessURL)
+
+	fileName := "#_RESUMO"
+	if empNome != "" {
+		fileName += "_" + sanitizeFilename(empNome)
+	}
+	if targetUser.Role == auth.RoleSocio && targetUser.SocioNome != "" {
+		fileName += "_" + sanitizeFilename(targetUser.SocioNome)
+	}
+	if ano != "" {
+		fileName += "_" + sanitizeFilename(ano)
+	}
+	fileName += ".url"
+
+	w.Header().Set("Content-Type", "application/internet-shortcut; charset=utf-8")
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, fileName))
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(content))
+}
+
+func (s *Server) publicOrigin(r *http.Request) string {
+	if s.baseURL != "" {
+		return s.baseURL
+	}
+	scheme := "http"
+	if r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https") {
+		scheme = "https"
+	}
+	return scheme + "://" + r.Host
 }
 
 func (s *Server) handleListarNomesSocios(w http.ResponseWriter, r *http.Request) {

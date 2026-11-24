@@ -4,6 +4,7 @@ import (
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -33,6 +34,7 @@ type User struct {
 	Username     string   `json:"username"`
 	Nome         string   `json:"nome"`
 	PasswordHash string   `json:"passwordHash,omitempty"`
+	AccessToken  string   `json:"accessToken,omitempty"`
 	Role         string   `json:"role"` // "admin", "gestor", "socio"
 	EmpresaIDs   []string `json:"empresaIds"`
 	SocioNome    string   `json:"socioNome,omitempty"` // Obrigatório quando Role == "socio"
@@ -41,6 +43,17 @@ type User struct {
 }
 
 func (u User) Public() User {
+	cp := u
+	cp.PasswordHash = ""
+	cp.AccessToken = ""
+	if cp.EmpresaIDs == nil {
+		cp.EmpresaIDs = []string{}
+	}
+	return cp
+}
+
+// ManageView oculta o hash de senha mas mantém o AccessToken para quem gerencia o usuário.
+func (u User) ManageView() User {
 	cp := u
 	cp.PasswordHash = ""
 	if cp.EmpresaIDs == nil {
@@ -210,6 +223,99 @@ func (s *Store) Authenticate(username, password string) (User, error) {
 	return User{}, errors.New("usuário ou senha inválidos")
 }
 
+func (s *Store) AuthenticateByToken(token string) (User, error) {
+	tok := strings.TrimSpace(token)
+	if len(tok) < 16 {
+		return User{}, errors.New("link de acesso inválido")
+	}
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	for _, u := range s.users {
+		if u.AccessToken == "" {
+			continue
+		}
+		if len(u.AccessToken) == len(tok) && subtle.ConstantTimeCompare([]byte(u.AccessToken), []byte(tok)) == 1 {
+			if !u.Ativo {
+				return User{}, errors.New("usuário desativado")
+			}
+			return u.Public(), nil
+		}
+	}
+	return User{}, errors.New("link de acesso inválido ou revogado")
+}
+
+func (s *Store) GetManagedByID(actor User, targetID string) (User, error) {
+	if actor.Role != RoleAdmin && actor.Role != RoleGestor {
+		return User{}, errors.New("sem permissão")
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	for _, u := range s.users {
+		if u.ID == targetID {
+			if actor.Role == RoleGestor && !actorCanManageUser(actor, u) {
+				return User{}, errors.New("sem permissão para acessar este usuário")
+			}
+			return u.ManageView(), nil
+		}
+	}
+	return User{}, errors.New("usuário não encontrado")
+}
+
+func (s *Store) GenerateAccessToken(actor User, targetID string) (User, error) {
+	if actor.Role != RoleAdmin && actor.Role != RoleGestor {
+		return User{}, errors.New("sem permissão para gerar link de acesso")
+	}
+
+	b := make([]byte, 24)
+	if _, err := rand.Read(b); err != nil {
+		return User{}, err
+	}
+	token := base64.RawURLEncoding.EncodeToString(b)
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for i := range s.users {
+		if s.users[i].ID == targetID {
+			if actor.Role == RoleGestor && !actorCanManageUser(actor, s.users[i]) {
+				return User{}, errors.New("você não tem permissão para gerenciar este usuário")
+			}
+			s.users[i].AccessToken = token
+			if err := s.saveLocked(); err != nil {
+				return User{}, err
+			}
+			return s.users[i].ManageView(), nil
+		}
+	}
+	return User{}, errors.New("usuário não encontrado")
+}
+
+func (s *Store) RevokeAccessToken(actor User, targetID string) (User, error) {
+	if actor.Role != RoleAdmin && actor.Role != RoleGestor {
+		return User{}, errors.New("sem permissão para revogar link de acesso")
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for i := range s.users {
+		if s.users[i].ID == targetID {
+			if actor.Role == RoleGestor && !actorCanManageUser(actor, s.users[i]) {
+				return User{}, errors.New("você não tem permissão para gerenciar este usuário")
+			}
+			s.users[i].AccessToken = ""
+			if err := s.saveLocked(); err != nil {
+				return User{}, err
+			}
+			return s.users[i].ManageView(), nil
+		}
+	}
+	return User{}, errors.New("usuário não encontrado")
+}
+
 func (s *Store) GetByID(id string) (User, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -229,12 +335,12 @@ func (s *Store) ListForActor(actor User) []User {
 	out := make([]User, 0, len(s.users))
 	for _, u := range s.users {
 		if actor.Role == RoleAdmin {
-			out = append(out, u.Public())
+			out = append(out, u.ManageView())
 			continue
 		}
 		// Gestor vê apenas usuários "socio" vinculados exclusivamente a empresas do próprio gestor
 		if actor.Role == RoleGestor && u.Role == RoleSocio && actorCanManageUser(actor, u) {
-			out = append(out, u.Public())
+			out = append(out, u.ManageView())
 		}
 	}
 	return out
@@ -329,7 +435,7 @@ func (s *Store) UpsertForActor(actor User, in UserInput) (User, error) {
 		if err := s.saveLocked(); err != nil {
 			return User{}, err
 		}
-		return u.Public(), nil
+		return u.ManageView(), nil
 	}
 
 	// Atualização
@@ -372,7 +478,7 @@ func (s *Store) UpsertForActor(actor User, in UserInput) (User, error) {
 			if err := s.saveLocked(); err != nil {
 				return User{}, err
 			}
-			return s.users[i].Public(), nil
+			return s.users[i].ManageView(), nil
 		}
 	}
 	return User{}, errors.New("usuário não encontrado")
