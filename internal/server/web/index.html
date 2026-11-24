@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Resumo de Planilhas — Google Drive</title>
+  <link rel="icon" type="image/x-icon" href="/favicon.ico" />
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <!-- Tela de Login (Modo Servidor) -->
+  <section id="loginScreen" class="login-screen hidden">
+    <div class="card login-card">
+      <div class="login-brand">
+        <div class="brand-icon">RP</div>
+        <div>
+          <h1>Resumo de Planilhas</h1>
+          <p class="muted small">Acesse com seu usuário e senha</p>
+        </div>
+      </div>
+      <div id="loginError" class="alert alert-error hidden"></div>
+      <form id="formLogin" class="login-form">
+        <div class="field">
+          <label for="loginUser">Usuário</label>
+          <input type="text" id="loginUser" autocomplete="username" required placeholder="Digite seu usuário" />
+        </div>
+        <div class="field">
+          <label for="loginPass">Senha</label>
+          <input type="password" id="loginPass" autocomplete="current-password" required placeholder="Digite sua senha" />
+        </div>
+        <button type="submit" class="btn btn-primary btn-lg" id="btnLoginSubmit">Entrar</button>
+      </form>
+    </div>
+  </section>
+
+  <!-- Aplicação Autenticada -->
+  <div id="appShell" class="hidden">
+    <header class="topbar no-print">
+      <div class="brand">
+        <div class="brand-icon">RP</div>
+        <div>
+          <h1>Resumo de Planilhas</h1>
+          <p class="subtitle" id="topbarSubtitle">Leitura direta do Google Drive • Sem vínculos quebrados</p>
+        </div>
+      </div>
+
+      <div class="topbar-actions">
+        <div id="userBadge" class="user-badge hidden"></div>
+        <div id="authBadge" class="auth-badge disconnected hidden">Verificando conexão...</div>
+        <button id="btnUsers" class="btn btn-secondary hidden" type="button">👥 Usuários</button>
+        <button id="btnConfig" class="btn btn-secondary hidden" type="button">⚙ Empresas e Drive</button>
+        <button id="btnClearCache" class="btn btn-ghost hidden" type="button" title="Limpa arquivos em cache local">Limpar Cache</button>
+        <button id="btnAppLogout" class="btn btn-danger-outline hidden" type="button">Sair</button>
+        <button id="btnShutdown" class="btn btn-danger-outline hidden" type="button" title="Encerrar o aplicativo local">Encerrar App</button>
+      </div>
+    </header>
+
+    <main class="container">
+      <div id="alertBox" class="alert hidden no-print"></div>
+
+      <!-- Setup inicial Google Drive (somente Admin) -->
+      <section id="setupSection" class="card setup-card hidden no-print">
+        <div class="setup-header">
+          <h2>Conectar ao Google Drive</h2>
+          <p>Envie a chave JSON da <strong>Conta de Serviço (Service Account)</strong> — recomendado para servidor — ou o <code>credentials.json</code> OAuth Desktop.</p>
+        </div>
+
+        <div id="stepCredentials" class="setup-step">
+          <h3>1. Credenciais do Google Cloud (<code>credentials.json</code>)</h3>
+          <p class="muted">
+            <strong>Recomendado (Docker / Multi-usuário):</strong> Crie uma <strong>Conta de Serviço</strong> no Google Cloud com a <strong>Google Drive API</strong> ativada, baixe a chave JSON e compartilhe as pastas do Drive com o e-mail da conta de serviço como <em>Leitor</em>.
+          </p>
+          <div class="cred-upload-row">
+            <input type="file" id="fileCredentials" accept=".json,application/json" />
+            <button id="btnUploadCredentials" class="btn btn-primary" type="button">Salvar JSON</button>
+          </div>
+          <details class="mt-sm">
+            <summary>Ou colar o conteúdo JSON manualmente</summary>
+            <textarea id="txtCredentials" rows="6" placeholder='{"type":"service_account","client_email":"...","private_key":"..."}'></textarea>
+            <button id="btnPasteCredentials" class="btn btn-secondary mt-xs" type="button">Salvar JSON colado</button>
+          </details>
+          <p class="muted small mt-sm">
+            URI de redirecionamento (apenas se usar OAuth): <code id="redirectUriLabel"></code>
+          </p>
+        </div>
+
+        <div id="stepLogin" class="setup-step hidden">
+          <h3>2. Autorizar conta do Google (OAuth)</h3>
+          <p class="muted">
+            Clique abaixo para autorizar a leitura das pastas de planilhas no Google Drive.
+            O token fica salvo em <code id="dataDirLabel"></code>.
+          </p>
+          <div class="row-gap">
+            <a href="/auth/login" class="btn btn-primary btn-lg">Conectar com Google Drive</a>
+            <button id="btnReplaceCreds" class="btn btn-ghost" type="button">Trocar credentials.json</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Aviso para não-admin caso Drive ainda não esteja configurado -->
+      <section id="driveNotReadyCard" class="card empty-state hidden no-print">
+        <h3>Integração com o Google Drive pendente</h3>
+        <p class="muted">O administrador ainda precisa concluir a conexão com o Google Drive no servidor.</p>
+      </section>
+
+      <!-- Painel principal -->
+      <section id="dashboardSection" class="hidden">
+        <!-- Barra de filtros -->
+        <div class="card filters-card no-print">
+          <div class="filters-grid">
+            <div class="field">
+              <label for="selEmpresa">Empresa</label>
+              <select id="selEmpresa"></select>
+            </div>
+
+            <div class="field" id="tipoField">
+              <label>Tipo de Planilha</label>
+              <div class="segmented" id="tipoSegmented">
+                <button type="button" class="seg-btn active" data-tipo="S">Sócios</button>
+                <button type="button" class="seg-btn" data-tipo="A">Acerto Semanal</button>
+              </div>
+            </div>
+
+            <div class="field field-sm">
+              <label for="selAno">Ano</label>
+              <select id="selAno"></select>
+            </div>
+
+            <div class="field hidden" id="mesField">
+              <label for="selMes">Mês (Acerto)</label>
+              <select id="selMes"></select>
+            </div>
+          </div>
+
+          <div class="filters-actions">
+            <button id="btnCarregar" class="btn btn-primary" type="button">↻ Atualizar</button>
+            <button id="btnImprimir" class="btn btn-secondary" type="button" disabled>🖨 Imprimir / PDF</button>
+            <button id="btnExportar" class="btn btn-success" type="button" disabled>⬇ Exportar Excel</button>
+          </div>
+        </div>
+
+        <!-- Empty state se não houver empresas -->
+        <div id="noEmpresaState" class="card empty-state hidden no-print">
+          <h3>Nenhuma empresa disponível</h3>
+          <p id="noEmpresaMsg" class="muted">Cadastre sua primeira empresa, escolha se ela usa Sócios, Acerto Semanal ou Ambos e selecione as pastas no Google Drive.</p>
+          <button id="btnNovaEmpresaEmpty" class="btn btn-primary hidden" type="button">+ Cadastrar Empresa</button>
+        </div>
+
+        <!-- Conteúdo do Resumo -->
+        <div id="resumoContainer" class="hidden">
+          <div class="print-header">
+            <h2 id="printEmpresa"></h2>
+            <p id="printSubtitulo"></p>
+          </div>
+
+          <div class="stats-bar no-print">
+            <span id="statsText"></span>
+            <div class="search-box" id="searchBoxWrap">
+              <input type="search" id="inpBuscaSocio" placeholder="Filtrar por nome do sócio..." />
+            </div>
+          </div>
+
+          <div id="avisosBox" class="alert alert-warning hidden no-print"></div>
+
+          <div id="kpiGrid" class="kpi-grid"></div>
+          <div id="tabsBar" class="tabs-bar no-print"></div>
+
+          <div class="card table-card">
+            <div class="table-wrap">
+              <table id="resumoTable">
+                <thead id="resumoThead"></thead>
+                <tbody id="resumoTbody"></tbody>
+                <tfoot id="resumoTfoot"></tfoot>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <div id="loadingOverlay" class="loading-box hidden no-print">
+          <div class="spinner"></div>
+          <p id="loadingText">Lendo planilhas do Google Drive...</p>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- Modal Empresas & Configurações (Admin) -->
+  <div id="modalEmpresas" class="modal-backdrop hidden no-print">
+    <div class="modal modal-lg">
+      <div class="modal-header">
+        <h2>Empresas e Pastas do Google Drive</h2>
+        <button type="button" class="icon-btn" data-close="modalEmpresas">✕</button>
+      </div>
+
+      <div class="modal-body">
+        <div class="config-split">
+          <div class="empresas-list-pane">
+            <div class="pane-header">
+              <h3>Cadastradas</h3>
+              <button id="btnAddEmpresa" class="btn btn-sm btn-primary" type="button">+ Nova</button>
+            </div>
+            <div id="empresasList" class="empresas-list"></div>
+
+            <div class="account-box">
+              <h4>Conexão Google Drive</h4>
+              <p id="modalAccountInfo" class="muted small"></p>
+              <div class="row-gap mt-xs">
+                <a href="/auth/login" id="btnModalReconnect" class="btn btn-sm btn-secondary">Reconectar OAuth</a>
+                <button id="btnLogout" class="btn btn-sm btn-danger-outline" type="button">Desconectar</button>
+                <button id="btnTrocarJsonModal" class="btn btn-sm btn-secondary" type="button">Trocar JSON</button>
+              </div>
+            </div>
+          </div>
+
+          <form id="formEmpresa" class="empresa-form">
+            <input type="hidden" id="empId" />
+            <h3 id="formEmpresaTitulo">Nova Empresa</h3>
+
+            <div class="field">
+              <label for="empNome">Nome da Empresa *</label>
+              <input type="text" id="empNome" required placeholder="Ex: JS DISTRIBUIDORA" />
+            </div>
+
+            <div class="field">
+              <label>Tipo de Planilhas Utilizadas *</label>
+              <div class="radio-cards">
+                <label class="radio-card">
+                  <input type="radio" name="empModo" value="S" checked />
+                  <span><strong>Apenas Sócios</strong><small>Planilha mensal por sócio</small></span>
+                </label>
+                <label class="radio-card">
+                  <input type="radio" name="empModo" value="A" />
+                  <span><strong>Apenas Acerto Semanal</strong><small>Pastas 01 - JANEIRO a 12 - DEZEMBRO</small></span>
+                </label>
+                <label class="radio-card">
+                  <input type="radio" name="empModo" value="SA" />
+                  <span><strong>Ambos</strong><small>Sócios e Acerto Semanal</small></span>
+                </label>
+              </div>
+            </div>
+
+            <div class="year-config-box">
+              <div class="year-config-header">
+                <label>Pastas no Google Drive por Ano</label>
+                <div class="row-gap">
+                  <button type="button" class="btn btn-sm btn-secondary" id="btnAddAno">+ Adicionar Ano</button>
+                  <button type="button" class="btn btn-sm btn-danger-outline hidden" id="btnRemoveAno">Remover Ano</button>
+                </div>
+              </div>
+              <div id="empAnosBar" class="year-tabs-bar"></div>
+
+              <div id="groupPastaSocios" class="folder-group">
+                <label id="lblPastaSocios">Pasta de Sócios no Google Drive</label>
+                <div class="folder-picker-row">
+                  <input type="text" id="empPastaSociosId" placeholder="ID ou URL da pasta no Google Drive" />
+                  <button type="button" class="btn btn-secondary" id="btnPickSocios">📁 Escolher no Drive</button>
+                </div>
+                <small id="empPastaSociosNome" class="muted"></small>
+              </div>
+
+              <div id="groupPastaAcerto" class="folder-group hidden">
+                <label id="lblPastaAcerto">Pasta Raiz de Acerto Semanal no Google Drive</label>
+                <div class="folder-picker-row">
+                  <input type="text" id="empPastaAcertoId" placeholder="ID ou URL da pasta contendo 01 - JANEIRO..." />
+                  <button type="button" class="btn btn-secondary" id="btnPickAcerto">📁 Escolher no Drive</button>
+                </div>
+                <small id="empPastaAcertoNome" class="muted"></small>
+              </div>
+            </div>
+
+            <details id="groupCelulasSocios" class="mt-sm">
+              <summary>Posição das células na planilha de Sócios (padrão já preenchido)</summary>
+              <div class="cells-grid mt-xs">
+                <div class="field"><label for="celValorTotal">Valor Total</label><input type="text" id="celValorTotal" value="B12" /></div>
+                <div class="field"><label for="celRecebimento">Recebimento</label><input type="text" id="celRecebimento" value="D11" /></div>
+                <div class="field"><label for="celMercPagas">Merc. Pagas</label><input type="text" id="celMercPagas" value="F6" /></div>
+                <div class="field"><label for="celValSocio">Sócio Ganhou</label><input type="text" id="celValSocio" value="E20" /></div>
+                <div class="field"><label for="celValFirma">Firma Ganhou</label><input type="text" id="celValFirma" value="E19" /></div>
+              </div>
+            </details>
+
+            <div class="form-actions">
+              <button type="submit" class="btn btn-primary">Salvar Empresa</button>
+              <button type="button" id="btnDeleteEmpresa" class="btn btn-danger-outline hidden">Excluir</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal Gestão de Usuários / Acessos dos Sócios (Admin e Gestor) -->
+  <div id="modalUsers" class="modal-backdrop hidden no-print">
+    <div class="modal modal-lg">
+      <div class="modal-header">
+        <h2 id="modalUsersTitle">Usuários e Acessos</h2>
+        <button type="button" class="icon-btn" data-close="modalUsers">✕</button>
+      </div>
+
+      <div class="modal-body">
+        <div class="config-split">
+          <div class="empresas-list-pane">
+            <div class="pane-header">
+              <h3>Cadastrados</h3>
+              <button id="btnAddUser" class="btn btn-sm btn-primary" type="button">+ Novo</button>
+            </div>
+            <div id="usersList" class="empresas-list"></div>
+          </div>
+
+          <form id="formUser" class="empresa-form">
+            <input type="hidden" id="usrId" />
+            <h3 id="formUserTitle">Novo Usuário</h3>
+
+            <div class="two-cols">
+              <div class="field">
+                <label for="usrUsername">Login (sem espaços) *</label>
+                <input type="text" id="usrUsername" required placeholder="Ex: joci ou acassio" />
+              </div>
+              <div class="field">
+                <label for="usrNome">Nome de Exibição</label>
+                <input type="text" id="usrNome" placeholder="Ex: Acássio Silva" />
+              </div>
+            </div>
+
+            <div class="two-cols">
+              <div class="field">
+                <label for="usrPassword">Senha <small id="usrPassHint" class="muted">(mínimo 4 caracteres)</small></label>
+                <input type="password" id="usrPassword" placeholder="Digite a senha" />
+              </div>
+              <div class="field" id="usrRoleField">
+                <label for="usrRole">Perfil *</label>
+                <select id="usrRole">
+                  <option value="gestor">Gestor (vê todos os sócios das empresas dele)</option>
+                  <option value="socio">Sócio (vê somente os próprios dados)</option>
+                  <option value="admin">Administrador (acesso total)</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="field" id="usrEmpresasField">
+              <label>Empresas Permitidas</label>
+              <div id="usrEmpresasCheckboxes" class="checkbox-grid"></div>
+            </div>
+
+            <div class="field hidden" id="usrSocioNomeField">
+              <label for="usrSocioNome">Nome do Sócio na Planilha * <small class="muted">(ex.: ACASSIO)</small></label>
+              <div class="folder-picker-row">
+                <input type="text" id="usrSocioNome" list="sociosDatalist" placeholder="Nome exato do arquivo .xlsx do sócio" />
+                <button type="button" class="btn btn-secondary" id="btnBuscarNomesSocios">Buscar do Drive</button>
+              </div>
+              <datalist id="sociosDatalist"></datalist>
+              <small id="usrSocioHint" class="muted">O sócio verá exclusivamente as linhas que correspondem a este nome.</small>
+            </div>
+
+            <label class="checkbox-inline">
+              <input type="checkbox" id="usrAtivo" checked />
+              <span>Acesso ativo (desmarque para bloquear login temporariamente)</span>
+            </label>
+
+            <div class="form-actions">
+              <button type="submit" class="btn btn-primary">Salvar Acesso</button>
+              <button type="button" id="btnDeleteUser" class="btn btn-danger-outline hidden">Excluir</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal Explorador de Pastas do Google Drive -->
+  <div id="modalDrivePicker" class="modal-backdrop hidden no-print">
+    <div class="modal modal-md">
+      <div class="modal-header">
+        <h2>Selecionar Pasta no Google Drive</h2>
+        <button type="button" class="icon-btn" data-close="modalDrivePicker">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="picker-toolbar">
+          <div class="segmented" id="drivePickerSource">
+            <button type="button" class="seg-btn active" id="btnDriveMyDrive">Meu Drive</button>
+            <button type="button" class="seg-btn" id="btnDriveShared">Compartilhados comigo</button>
+          </div>
+          <button type="button" class="btn btn-sm btn-primary" id="btnSelectCurrentFolder" disabled>Selecionar pasta atual</button>
+        </div>
+
+        <div id="driveBreadcrumb" class="breadcrumb"></div>
+        <div id="driveFoldersList" class="drive-list"></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

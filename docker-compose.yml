@@ -1,0 +1,18 @@
+services:
+  resumo-planilhas:
+    build: .
+    container_name: resumo-planilhas
+    restart: unless-stopped
+    ports:
+      - "${APP_PORT:-8745}:8080"
+    environment:
+      - TZ=${TZ:-America/Manaus}
+      - SERVER_MODE=true
+      - PORT=8080
+      - DATA_DIR=/data
+      - ADMIN_USER=${ADMIN_USER:-admin}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD}
+      - SESSION_SECRET=${SESSION_SECRET}
+      - GOOGLE_CREDENTIALS_FILE=/data/credentials.json
+    volumes:
+      - ./data:/data

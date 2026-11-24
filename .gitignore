@@ -1,0 +1,16 @@
+# Segredos e dados locais (NUNCA versionar)
+.env
+data/
+credentials.json
+token.json
+secret.key
+users.json
+
+# Binários e artefatos de build
+dist/
+*.exe
+*.syso
+cmd/resumoplanilhas/*.syso
+
+# Outros
+docs/
