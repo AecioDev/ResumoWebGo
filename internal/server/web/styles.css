@@ -33,6 +33,7 @@ body {
 }
 
 .login-screen {
+  width: 100%;
   min-height: 100vh;
   display: flex;
   align-items: center;
@@ -41,22 +42,28 @@ body {
   background: linear-gradient(135deg, #0f172a 0%, #1e3a5f 100%);
 }
 
-.login-card {
+.card.login-card {
   width: 100%;
   max-width: 400px;
   padding: 28px;
+  margin: 0;
 }
 
 .login-brand {
   display: flex;
   align-items: center;
   gap: 12px;
-  margin-bottom: 20px;
+  margin-bottom: 22px;
 }
 
 .login-brand h1 {
   margin: 0;
   font-size: 19px;
+  line-height: 1.2;
+}
+
+.login-brand p {
+  margin: 2px 0 0;
 }
 
 .login-form {
@@ -162,6 +169,8 @@ input[type="password"] {
   height: 38px;
   border-radius: 9px;
   background: linear-gradient(135deg, #2563eb, #0ea5e9);
+  color: #ffffff;
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: center;

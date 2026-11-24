@@ -5,6 +5,7 @@ import (
 	"embed"
 	"encoding/json"
 	"fmt"
+	"html"
 	"io"
 	"io/fs"
 	"net/http"
@@ -96,7 +97,10 @@ func (s *Server) Handler() http.Handler {
 		panic(err)
 	}
 	fileServer := http.FileServer(http.FS(subFS))
-	mux.Handle("/", fileServer)
+	mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-cache")
+		fileServer.ServeHTTP(w, r)
+	}))
 
 	return mux
 }
@@ -314,6 +318,7 @@ func (s *Server) handleSaveCredentials(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	s.drive.InvalidateAuthCache()
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":      true,
 		"message": "Credenciais salvas com sucesso!",
@@ -345,6 +350,7 @@ func (s *Server) handleAuthCallback(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/?authError="+url.QueryEscape(err.Error()), http.StatusFound)
 		return
 	}
+	s.drive.InvalidateAuthCache()
 	http.Redirect(w, r, "/?authOk=1", http.StatusFound)
 }
 
@@ -504,7 +510,40 @@ func (s *Server) handleDownloadShortcut(w http.ResponseWriter, r *http.Request) 
 	origin := s.publicOrigin(r)
 	accessURL := origin + "/acesso?" + q.Encode()
 
-	content := fmt.Sprintf("[InternetShortcut]\r\nURL=%s\r\n", accessURL)
+	title := "Resumo de Planilhas"
+	if empNome != "" {
+		title = "Resumo — " + empNome
+		if ano != "" {
+			title += " (" + ano + ")"
+		}
+	}
+
+	jsURL, _ := json.Marshal(accessURL)
+	escURL := html.EscapeString(accessURL)
+	escTitle := html.EscapeString(title)
+
+	content := fmt.Sprintf(`<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="refresh" content="0; url=%s" />
+  <title>%s</title>
+  <style>
+    body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;font-family:Segoe UI,Arial,sans-serif;background:#0f172a;color:#f8fafc}
+    .box{background:#1e293b;padding:28px 34px;border-radius:12px;text-align:center;box-shadow:0 12px 32px rgba(0,0,0,.35)}
+    a{display:inline-block;margin-top:14px;padding:10px 18px;border-radius:8px;background:#2563eb;color:#fff;text-decoration:none;font-weight:600}
+  </style>
+</head>
+<body>
+  <div class="box">
+    <h2>%s</h2>
+    <p>Abrindo painel de resumo...</p>
+    <a href="%s">Abrir agora</a>
+  </div>
+  <script>window.location.replace(%s);</script>
+</body>
+</html>
+`, escURL, escTitle, escTitle, escURL, string(jsURL))
 
 	fileName := "#_RESUMO"
 	if empNome != "" {
@@ -516,9 +555,9 @@ func (s *Server) handleDownloadShortcut(w http.ResponseWriter, r *http.Request) 
 	if ano != "" {
 		fileName += "_" + sanitizeFilename(ano)
 	}
-	fileName += ".url"
+	fileName += ".html"
 
-	w.Header().Set("Content-Type", "application/internet-shortcut; charset=utf-8")
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, fileName))
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(content))
@@ -798,6 +837,7 @@ func sanitizeFilename(name string) string {
 
 func writeJSON(w http.ResponseWriter, status int, payload any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(payload)
 }

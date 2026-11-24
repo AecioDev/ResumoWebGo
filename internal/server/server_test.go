@@ -281,7 +281,7 @@ func TestMultiUserIsolationAdminGestorSocio(t *testing.T) {
 		t.Fatalf("AccessToken veio vazio")
 	}
 
-	// Download do arquivo .url
+	// Download do arquivo de atalho .html
 	rSc, err := adminCli.Get(ts.URL + "/api/users/" + jociID + "/atalho?empresaId=" + empJoci.ID + "&ano=2026&tipo=S")
 	if err != nil || rSc.StatusCode != http.StatusOK {
 		t.Fatalf("download atalho falhou: err=%v status=%v", err, rSc)
@@ -289,8 +289,8 @@ func TestMultiUserIsolationAdminGestorSocio(t *testing.T) {
 	var scBuf bytes.Buffer
 	_, _ = scBuf.ReadFrom(rSc.Body)
 	rSc.Body.Close()
-	if !bytes.Contains(scBuf.Bytes(), []byte("[InternetShortcut]")) || !bytes.Contains(scBuf.Bytes(), []byte(jociWithTok.AccessToken)) {
-		t.Fatalf("conteúdo do atalho .url inválido: %s", scBuf.String())
+	if !bytes.Contains(scBuf.Bytes(), []byte(`http-equiv="refresh"`)) || !bytes.Contains(scBuf.Bytes(), []byte(jociWithTok.AccessToken)) {
+		t.Fatalf("conteúdo do atalho .html inválido: %s", scBuf.String())
 	}
 
 	// Cliente anônimo acessa /acesso?token=... -> deve redirecionar sem o token e já logar via cookie

@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
@@ -72,8 +73,17 @@ func (c *Client) detectCredentialsMode() (string, []byte, error) {
 type Client struct {
 	store *config.Store
 
-	mu           sync.Mutex
-	pendingState string
+	mu              sync.Mutex
+	pendingState    string
+	cachedStatus    *AuthStatus
+	cachedStatusExp time.Time
+}
+
+func (c *Client) InvalidateAuthCache() {
+	c.mu.Lock()
+	c.cachedStatus = nil
+	c.cachedStatusExp = time.Time{}
+	c.mu.Unlock()
 }
 
 func NewClient(store *config.Store) *Client {
@@ -145,6 +155,7 @@ func (c *Client) ExchangeCode(ctx context.Context, redirectURI, state, code stri
 }
 
 func (c *Client) Disconnect() error {
+	c.InvalidateAuthCache()
 	err := os.Remove(c.store.TokenPath())
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -231,6 +242,14 @@ func (c *Client) driveService(ctx context.Context) (*drive.Service, error) {
 }
 
 func (c *Client) GetAuthStatus(ctx context.Context) AuthStatus {
+	c.mu.Lock()
+	if c.cachedStatus != nil && time.Now().Before(c.cachedStatusExp) {
+		cp := *c.cachedStatus
+		c.mu.Unlock()
+		return cp
+	}
+	c.mu.Unlock()
+
 	st := AuthStatus{
 		HasCredentials: c.store.HasCredentials(),
 	}
@@ -271,6 +290,13 @@ func (c *Client) GetAuthStatus(ctx context.Context) AuthStatus {
 		st.UserEmail = about.User.EmailAddress
 		st.UserName = about.User.DisplayName
 	}
+
+	c.mu.Lock()
+	cp := st
+	c.cachedStatus = &cp
+	c.cachedStatusExp = time.Now().Add(5 * time.Minute)
+	c.mu.Unlock()
+
 	return st
 }
 
